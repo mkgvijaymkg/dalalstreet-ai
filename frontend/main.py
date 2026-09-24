@@ -47,22 +47,34 @@ try:
 except ImportError:
     TransportProtocol = None
 
-RESOURCE = os.environ.get(
-    "AGENT_ENGINE_RESOURCE_NAME",
-    "projects/976987337939/locations/us-east1/reasoningEngines/4697036708045127680",
-)
-# The agent's app directory (matches agent_directory in agents-cli-manifest.yaml).
+from pathlib import Path
+
+def _get_resource_name() -> str:
+    env_res = os.environ.get("AGENT_ENGINE_RESOURCE_NAME")
+    if env_res:
+        return env_res
+    metadata_path = Path(__file__).parent.parent / "deployment_metadata.json"
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                res_id = data.get("remote_agent_runtime_id")
+                if res_id:
+                    return res_id
+        except Exception:
+            pass
+    return "projects/976987337939/locations/us-east1/reasoningEngines/4697036708045127680"
+
+RESOURCE = _get_resource_name()
 AGENT_DIRECTORY = os.environ.get("AGENT_DIRECTORY", "app")
-# Location is embedded in the resource name: projects/<p>/locations/<loc>/reasoningEngines/<id>.
 LOCATION = RESOURCE.split("/locations/")[1].split("/")[0]
 
-# A2A endpoint for an Agent Runtime deployment, via the Agent Engine HTTP
-# passthrough. The card lives at the well-known path under this base.
 A2A_BASE = (
     f"https://{LOCATION}-aiplatform.googleapis.com/reasoningEngines/v1/"
     f"{RESOURCE}/api/a2a/{AGENT_DIRECTORY}"
 )
 A2A_CARD_URL = f"{A2A_BASE}/.well-known/agent-card.json"
+
 
 # The agent tags its A2UI data parts with this mime type.
 _A2UI_MIME = "application/json+a2ui"
