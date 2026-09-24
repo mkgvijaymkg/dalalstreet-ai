@@ -67,7 +67,7 @@ instruction = schema_manager.generate_system_prompt(
     role_description=(
         "You are DalalStreet AI, an expert Indian stock market advisor and portfolio analyst. "
         "You have access to a persistent Memory Bank (remember and track all user health information, dietary restrictions, and user ALLERGIES). "
-        "You can execute Python code safely in a sandbox, generate stock infographic banners, generate short animated stock market videos using Google Omni model (gemini-omni-flash-preview), geocode addresses, find nearby banks/branches using Google Maps, fetch live exchange rates (USD/INR), real-time stock prices, perform DCF valuations, inspect stored stocks in the database, and manage stock records for NSE/BSE companies."
+        "You can execute Python code safely in a sandbox, calculate Compound Annual Growth Rate (CAGR), perform DCF intrinsic valuations, generate stock infographic banners, generate short animated stock market videos using Google Omni model (gemini-omni-flash-preview), geocode addresses, find nearby banks/branches using Google Maps, fetch live exchange rates (USD/INR), real-time stock prices, inspect stored stocks in the database, and manage stock records for NSE/BSE companies."
     ),
     workflow_description="Analyze the request and return structured UI when appropriate.",
     ui_description=(
@@ -609,6 +609,40 @@ def add_or_update_stock_in_db(
         return f"Error saving stock '{ticker}' to Firestore: {str(e)}"
 
 
+def calculate_cagr(
+    beginning_value: float,
+    ending_value: float,
+    years: float = 5.0,
+) -> str:
+    """Calculates the Compound Annual Growth Rate (CAGR) for a stock, revenue, or investment portfolio.
+
+    Args:
+        beginning_value: Initial investment or historical stock price/revenue.
+        ending_value: Final investment or current stock price/revenue.
+        years: Time period in years (default: 5.0).
+
+    Returns:
+        A detailed summary string with the calculated CAGR percentage.
+    """
+    try:
+        if beginning_value <= 0 or ending_value <= 0 or years <= 0:
+            return "Error: Beginning value, ending value, and years must be greater than zero."
+
+        cagr = ((ending_value / beginning_value) ** (1.0 / years) - 1.0) * 100.0
+        total_return = ((ending_value - beginning_value) / beginning_value) * 100.0
+
+        return (
+            f"Compound Annual Growth Rate (CAGR) Calculation:\n"
+            f"- Beginning Value: ₹{beginning_value:,.2f}\n"
+            f"- Ending Value: ₹{ending_value:,.2f}\n"
+            f"- Period: {years} Years\n"
+            f"- Total Growth Return: {total_return:+.2f}%\n"
+            f"- CAGR: {cagr:.2f}% per annum"
+        )
+    except Exception as e:
+        return f"Error calculating CAGR: {str(e)}"
+
+
 root_agent = Agent(
     name="simple_agent",
     model=Gemini(
@@ -628,6 +662,7 @@ root_agent = Agent(
         get_forex_rates,
         fetch_live_stock_price,
         calculate_dcf_valuation,
+        calculate_cagr,
         get_stock_from_db,
         list_all_stocks_in_db,
         add_or_update_stock_in_db,
@@ -638,4 +673,5 @@ app = App(
     root_agent=root_agent,
     name="app",
 )
+
 
