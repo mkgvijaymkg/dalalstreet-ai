@@ -17,6 +17,7 @@ import datetime
 import json
 import os
 from pathlib import Path
+import time
 import uuid
 from zoneinfo import ZoneInfo
 import google.auth
@@ -67,6 +68,7 @@ instruction = schema_manager.generate_system_prompt(
     role_description=(
         "You are DalalStreet AI, an expert Indian stock market advisor and portfolio analyst. "
         "You have access to a persistent Memory Bank (remember and track all user health information, dietary restrictions, and user ALLERGIES). "
+        "You can search stocks by partial company name, brand, or symbol (e.g. 'Tata', 'FirstCry', 'Infosys', 'Airtel', 'Maruti', 'HDFC', 'Reliance') using search_stocks_in_db and get_stock_from_db. "
         "You can execute Python code safely in a sandbox, calculate Compound Annual Growth Rate (CAGR), perform DCF intrinsic valuations, generate stock infographic banners, generate short animated stock market videos using Google Omni model (gemini-omni-flash-preview), geocode addresses, find nearby banks/branches using Google Maps, fetch live exchange rates (USD/INR), real-time stock prices, inspect stored stocks in the database, and manage stock records for NSE/BSE companies."
     ),
     workflow_description="Analyze the request and return structured UI when appropriate.",
@@ -469,11 +471,51 @@ _ALL_STOCKS_CACHE = {"timestamp": 0, "data": None}
 _CACHE_TTL_SECONDS = 300
 
 
-def get_stock_from_db(ticker: str) -> str:
-    """Fetches details for a specific Indian stock from the Firestore database with sub-millisecond TTL caching.
+def search_stocks_in_db(query: str) -> str:
+    """Searches Indian stocks in the Firestore database by partial company name, brand, ticker, or sector keyword.
 
     Args:
-        ticker: The stock ticker symbol (e.g. 'RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'TATAMOTORS').
+        query: Partial stock name, brand, ticker symbol, or sector (e.g. 'Tata', 'FirstCry', 'Airtel', 'Maruti', 'HDFC', 'Infosys', 'Reliance', 'IT', 'Banking').
+
+    Returns:
+        A list of matching stock records found in the database.
+    """
+    try:
+        if not query or not query.strip():
+            return "Please provide a search term (e.g., 'Tata', 'FirstCry', 'Infosys', 'Airtel')."
+
+        search_term = query.strip().lower()
+        db = _get_firestore_client()
+        docs = db.collection(COLLECTION_NAME).stream()
+
+        matches = []
+        for doc in docs:
+            data = doc.to_dict()
+            t_str = data.get("ticker", "").lower()
+            name_str = data.get("company_name", "").lower()
+            sec_str = data.get("sector", "").lower()
+            notes_str = data.get("notes", "").lower()
+
+            if (search_term in t_str) or (search_term in name_str) or (search_term in sec_str) or (search_term in notes_str):
+                matches.append(
+                    f"• [{data.get('ticker')}] {data.get('company_name')} ({data.get('sector')}) - "
+                    f"Price: ₹{data.get('current_price', 0):,.2f} | P/E: {data.get('pe_ratio')} | Rec: {data.get('recommendation')}\n"
+                    f"  Notes: {data.get('notes')}"
+                )
+
+        if not matches:
+            return f"No stocks matching search term '{query}' were found in the database."
+
+        return f"Found {len(matches)} Stock(s) matching '{query}':\n" + "\n\n".join(matches)
+    except Exception as e:
+        return f"Error searching stocks in Firestore: {str(e)}"
+
+
+def get_stock_from_db(ticker: str) -> str:
+    """Fetches details for a specific Indian stock from the Firestore database, supporting exact ticker or partial stock name matching.
+
+    Args:
+        ticker: The stock ticker symbol or partial company name (e.g. 'RELIANCE', 'TCS', 'INFY', 'Tata Motors', 'FirstCry', 'Airtel', 'Maruti').
 
     Returns:
         A text description of the stock data found in the database.
@@ -482,7 +524,7 @@ def get_stock_from_db(ticker: str) -> str:
         clean_ticker = ticker.strip().upper().replace(".NS", "").replace(".BO", "")
         now = time.time()
 
-        # Check in-memory cache first for high-performance low latency read
+        # Check in-memory cache first for exact ticker match
         if clean_ticker in _STOCK_CACHE:
             cached_time, data = _STOCK_CACHE[clean_ticker]
             if now - cached_time < _CACHE_TTL_SECONDS:
@@ -501,24 +543,25 @@ def get_stock_from_db(ticker: str) -> str:
         doc_ref = db.collection(COLLECTION_NAME).document(clean_ticker)
         doc = doc_ref.get()
 
-        if not doc.exists:
-            return f"Stock ticker '{clean_ticker}' was not found in the Firestore database."
+        if doc.exists:
+            data = doc.to_dict()
+            _STOCK_CACHE[clean_ticker] = (now, data)
+            return (
+                f"Database Record for {data.get('company_name')} ({clean_ticker}):\n"
+                f"- Sector: {data.get('sector')}\n"
+                f"- Stored Price: ₹{data.get('current_price'):,.2f}\n"
+                f"- P/E Ratio: {data.get('pe_ratio')}\n"
+                f"- Market Cap: ₹{data.get('market_cap_cr'):,.2f} Cr\n"
+                f"- Recommendation: {data.get('recommendation')}\n"
+                f"- Notes: {data.get('notes')}\n"
+                f"- Last Updated: {data.get('last_updated')}"
+            )
 
-        data = doc.to_dict()
-        _STOCK_CACHE[clean_ticker] = (now, data)
-
-        return (
-            f"Database Record for {data.get('company_name')} ({clean_ticker}):\n"
-            f"- Sector: {data.get('sector')}\n"
-            f"- Stored Price: ₹{data.get('current_price'):,.2f}\n"
-            f"- P/E Ratio: {data.get('pe_ratio')}\n"
-            f"- Market Cap: ₹{data.get('market_cap_cr'):,.2f} Cr\n"
-            f"- Recommendation: {data.get('recommendation')}\n"
-            f"- Notes: {data.get('notes')}\n"
-            f"- Last Updated: {data.get('last_updated')}"
-        )
+        # Fallback: Smart partial stock name search
+        return search_stocks_in_db(ticker)
     except Exception as e:
         return f"Error retrieving stock '{ticker}' from Firestore: {str(e)}"
+
 
 
 def list_all_stocks_in_db() -> str:
@@ -663,6 +706,7 @@ root_agent = Agent(
         fetch_live_stock_price,
         calculate_dcf_valuation,
         calculate_cagr,
+        search_stocks_in_db,
         get_stock_from_db,
         list_all_stocks_in_db,
         add_or_update_stock_in_db,
