@@ -463,8 +463,14 @@ def calculate_dcf_valuation(
         return f"Error computing DCF valuation: {str(e)}"
 
 
+# Performance & Scalability: In-memory TTL cache (300 seconds expiration)
+_STOCK_CACHE = {}
+_ALL_STOCKS_CACHE = {"timestamp": 0, "data": None}
+_CACHE_TTL_SECONDS = 300
+
+
 def get_stock_from_db(ticker: str) -> str:
-    """Fetches details for a specific Indian stock from the Firestore database.
+    """Fetches details for a specific Indian stock from the Firestore database with sub-millisecond TTL caching.
 
     Args:
         ticker: The stock ticker symbol (e.g. 'RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'TATAMOTORS').
@@ -473,8 +479,25 @@ def get_stock_from_db(ticker: str) -> str:
         A text description of the stock data found in the database.
     """
     try:
-        db = _get_firestore_client()
         clean_ticker = ticker.strip().upper().replace(".NS", "").replace(".BO", "")
+        now = time.time()
+
+        # Check in-memory cache first for high-performance low latency read
+        if clean_ticker in _STOCK_CACHE:
+            cached_time, data = _STOCK_CACHE[clean_ticker]
+            if now - cached_time < _CACHE_TTL_SECONDS:
+                return (
+                    f"Database Record for {data.get('company_name')} ({clean_ticker}) [⚡ Cached Response]:\n"
+                    f"- Sector: {data.get('sector')}\n"
+                    f"- Stored Price: ₹{data.get('current_price'):,.2f}\n"
+                    f"- P/E Ratio: {data.get('pe_ratio')}\n"
+                    f"- Market Cap: ₹{data.get('market_cap_cr'):,.2f} Cr\n"
+                    f"- Recommendation: {data.get('recommendation')}\n"
+                    f"- Notes: {data.get('notes')}\n"
+                    f"- Last Updated: {data.get('last_updated')}"
+                )
+
+        db = _get_firestore_client()
         doc_ref = db.collection(COLLECTION_NAME).document(clean_ticker)
         doc = doc_ref.get()
 
@@ -482,6 +505,8 @@ def get_stock_from_db(ticker: str) -> str:
             return f"Stock ticker '{clean_ticker}' was not found in the Firestore database."
 
         data = doc.to_dict()
+        _STOCK_CACHE[clean_ticker] = (now, data)
+
         return (
             f"Database Record for {data.get('company_name')} ({clean_ticker}):\n"
             f"- Sector: {data.get('sector')}\n"
@@ -497,24 +522,38 @@ def get_stock_from_db(ticker: str) -> str:
 
 
 def list_all_stocks_in_db() -> str:
-    """Lists all Indian stocks currently stored in the Firestore database.
+    """Lists Indian stocks stored in the Firestore database using field projections and caching for performance.
 
     Returns:
-        A summary string listing all tracked stocks and their basic metrics.
+        A summary string listing tracked stocks and their basic metrics.
     """
     try:
+        now = time.time()
+        if _ALL_STOCKS_CACHE["data"] and (now - _ALL_STOCKS_CACHE["timestamp"] < _CACHE_TTL_SECONDS):
+            return "Tracked Indian Stocks in Database [⚡ Cached High-Performance Response]:\n" + _ALL_STOCKS_CACHE["data"]
+
         db = _get_firestore_client()
-        docs = db.collection(COLLECTION_NAME).stream()
+        # Projections: select only essential summary fields to reduce network bandwidth and payload size
+        docs = db.collection(COLLECTION_NAME).select(
+            ["ticker", "company_name", "sector", "current_price", "pe_ratio", "recommendation"]
+        ).stream()
+
         results = []
         for doc in docs:
             data = doc.to_dict()
             results.append(
                 f"• [{data.get('ticker')}] {data.get('company_name')} ({data.get('sector')}) - "
-                f"Price: ₹{data.get('current_price'):,.2f} | P/E: {data.get('pe_ratio')} | Rec: {data.get('recommendation')}"
+                f"Price: ₹{data.get('current_price', 0):,.2f} | P/E: {data.get('pe_ratio')} | Rec: {data.get('recommendation')}"
             )
+
         if not results:
             return "No stocks found in the database."
-        return "Tracked Indian Stocks in Database:\n" + "\n".join(results)
+
+        formatted_result = "\n".join(results)
+        _ALL_STOCKS_CACHE["timestamp"] = now
+        _ALL_STOCKS_CACHE["data"] = formatted_result
+
+        return "Tracked Indian Stocks in Database:\n" + formatted_result
     except Exception as e:
         return f"Error listing stocks from Firestore: {str(e)}"
 
@@ -560,6 +599,11 @@ def add_or_update_stock_in_db(
             "last_updated": now_iso,
         }
         db.collection(COLLECTION_NAME).document(clean_ticker).set(stock_data)
+
+        # Invalidate in-memory caches to maintain consistency
+        _STOCK_CACHE.pop(clean_ticker, None)
+        _ALL_STOCKS_CACHE["data"] = None
+
         return f"Successfully saved stock '{clean_ticker}' ({company_name}) to Firestore."
     except Exception as e:
         return f"Error saving stock '{ticker}' to Firestore: {str(e)}"
@@ -594,3 +638,4 @@ app = App(
     root_agent=root_agent,
     name="app",
 )
+

@@ -1,0 +1,38 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "indian_stocks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sector", "order": "ASCENDING" },
+        { "fieldPath": "market_cap_cr", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "indian_stocks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sector", "order": "ASCENDING" },
+        { "fieldPath": "pe_ratio", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "indian_stocks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "recommendation", "order": "ASCENDING" },
+        { "fieldPath": "market_cap_cr", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "indian_stocks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sector", "order": "ASCENDING" },
+        { "fieldPath": "recommendation", "order": "ASCENDING" },
+        { "fieldPath": "current_price", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
