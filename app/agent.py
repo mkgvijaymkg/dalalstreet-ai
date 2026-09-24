@@ -68,6 +68,7 @@ instruction = schema_manager.generate_system_prompt(
     role_description=(
         "You are DalalStreet AI, an expert Indian stock market advisor and portfolio analyst. "
         "You have access to a persistent Memory Bank (remember and track all user health information, dietary restrictions, and user ALLERGIES). "
+        "You can analyze company financial statements, balance sheets, income statements, and annual reports to project future revenue, net profit, EPS, and target valuations using analyze_company_books, calculate_dcf_valuation, calculate_cagr, or custom Python code in your execution sandbox. "
         "You can search stocks by partial company name, brand, or symbol (e.g. 'Tata', 'FirstCry', 'Infosys', 'Airtel', 'Maruti', 'HDFC', 'Reliance') using search_stocks_in_db and get_stock_from_db. "
         "You can execute Python code safely in a sandbox, calculate Compound Annual Growth Rate (CAGR), perform DCF intrinsic valuations, generate stock infographic banners, generate short animated stock market videos using Google Omni model (gemini-omni-flash-preview), geocode addresses, find nearby banks/branches using Google Maps, fetch live exchange rates (USD/INR), real-time stock prices, inspect stored stocks in the database, and manage stock records for NSE/BSE companies."
     ),
@@ -686,6 +687,68 @@ def calculate_cagr(
         return f"Error calculating CAGR: {str(e)}"
 
 
+def analyze_company_books(
+    ticker_or_name: str,
+    revenue_cr: float,
+    net_profit_cr: float,
+    operating_margin_pct: float,
+    revenue_cagr_pct: float = 12.0,
+    projection_years: int = 3,
+    outstanding_shares_cr: float = 100.0,
+) -> str:
+    """Analyzes company financial books and generates multi-year revenue, profit, EPS, and valuation projections.
+
+    Args:
+        ticker_or_name: Stock ticker or company name (e.g. 'RELIANCE', 'TCS', 'INFY', 'Tata Motors', 'FirstCry').
+        revenue_cr: Current annual revenue in Crores INR (e.g. 50000.0).
+        net_profit_cr: Current annual net profit in Crores INR (e.g. 8000.0).
+        operating_margin_pct: Current operating margin percentage (e.g. 18.5).
+        revenue_cagr_pct: Expected revenue CAGR percentage for projections (default: 12.0%).
+        projection_years: Number of forecast years (default: 3).
+        outstanding_shares_cr: Total outstanding shares in Crores (default: 100.0).
+
+    Returns:
+        A formatted 3-statement financial projection summary with forecasted EPS and valuation estimates.
+    """
+    try:
+        if revenue_cr <= 0 or projection_years <= 0:
+            return "Error: Revenue and projection years must be greater than zero."
+
+        net_margin = (net_profit_cr / revenue_cr) if revenue_cr > 0 else 0.15
+        current_eps = net_profit_cr / outstanding_shares_cr if outstanding_shares_cr > 0 else 0.0
+
+        projections = []
+        proj_rev = revenue_cr
+        proj_profit = net_profit_cr
+
+        for year in range(1, projection_years + 1):
+            proj_rev *= (1.0 + (revenue_cagr_pct / 100.0))
+            proj_profit = proj_rev * net_margin
+            proj_eps = proj_profit / outstanding_shares_cr if outstanding_shares_cr > 0 else 0.0
+            projections.append(
+                f"• Year {year}: Projected Revenue = ₹{proj_rev:,.2f} Cr | Net Profit = ₹{proj_profit:,.2f} Cr | EPS = ₹{proj_eps:,.2f}"
+            )
+
+        implied_pe = 25.0
+        target_price = (proj_profit / outstanding_shares_cr) * implied_pe if outstanding_shares_cr > 0 else 0.0
+
+        return (
+            f"Financial Books & Multi-Year Projection Model for {ticker_or_name}:\n"
+            f"--- Baseline Metrics ---\n"
+            f"- Base Revenue: ₹{revenue_cr:,.2f} Cr\n"
+            f"- Base Net Profit: ₹{net_profit_cr:,.2f} Cr (Net Margin: {net_margin * 100:.2f}%)\n"
+            f"- Operating Margin: {operating_margin_pct:.2f}%\n"
+            f"- Current EPS: ₹{current_eps:,.2f}\n"
+            f"- Assumed Revenue CAGR: {revenue_cagr_pct:.2f}%\n\n"
+            f"--- Forecasted Financials ({projection_years}-Year Horizon) ---\n" +
+            "\n".join(projections) +
+            f"\n\n--- Valuation Target Estimate ---\n"
+            f"- Implied Target Price (at {implied_pe}x P/E): ₹{target_price:,.2f} per share"
+        )
+    except Exception as e:
+        return f"Error building financial projection model: {str(e)}"
+
+
 root_agent = Agent(
     name="simple_agent",
     model=Gemini(
@@ -706,6 +769,7 @@ root_agent = Agent(
         fetch_live_stock_price,
         calculate_dcf_valuation,
         calculate_cagr,
+        analyze_company_books,
         search_stocks_in_db,
         get_stock_from_db,
         list_all_stocks_in_db,
@@ -717,5 +781,6 @@ app = App(
     root_agent=root_agent,
     name="app",
 )
+
 
 
